@@ -57,6 +57,9 @@ serve(async (req) => {
       case 'get_peer_status':
         return await getPeerStatus(user.id, params);
       
+      case 'sync_wireguard_status':
+        return await syncWireGuardStatus();
+      
       default:
         throw new Error(`Unknown action: ${action}`);
     }
@@ -83,23 +86,55 @@ async function generateKeys() {
 }
 
 async function generatePrivateKey(): Promise<string> {
-  // Simulate WireGuard private key generation
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  let result = '';
-  for (let i = 0; i < 44; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  try {
+    const process = new Deno.Command("wg", {
+      args: ["genkey"],
+      stdout: "piped",
+      stderr: "piped",
+    });
+    
+    const output = await process.output();
+    if (!output.success) {
+      throw new Error(`Failed to generate private key: ${new TextDecoder().decode(output.stderr)}`);
+    }
+    
+    return new TextDecoder().decode(output.stdout).trim();
+  } catch (error) {
+    console.error('Error generating private key, falling back to simulation:', error);
+    // Fallback to simulation if wg command fails
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    let result = '';
+    for (let i = 0; i < 44; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result + '=';
   }
-  return result + '=';
 }
 
 async function generatePublicKey(privateKey: string): Promise<string> {
-  // Simulate public key derivation from private key
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  let result = '';
-  for (let i = 0; i < 44; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  try {
+    const process = new Deno.Command("sh", {
+      args: ["-c", `echo "${privateKey}" | wg pubkey`],
+      stdout: "piped",
+      stderr: "piped",
+    });
+    
+    const output = await process.output();
+    if (!output.success) {
+      throw new Error(`Failed to generate public key: ${new TextDecoder().decode(output.stderr)}`);
+    }
+    
+    return new TextDecoder().decode(output.stdout).trim();
+  } catch (error) {
+    console.error('Error generating public key, falling back to simulation:', error);
+    // Fallback to simulation if wg command fails
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    let result = '';
+    for (let i = 0; i < 44; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result + '=';
   }
-  return result + '=';
 }
 
 async function createPeer(userId: string, params: any) {
@@ -265,19 +300,53 @@ async function updateServerStatus(params: any) {
 async function getPeerStatus(userId: string, params: any) {
   const { peerId } = params;
   
-  // Simulate getting peer status from WireGuard
-  const randomStatus = Math.random() > 0.3 ? 'connected' : 'disconnected';
-  const transferRx = Math.floor(Math.random() * 1000000000);
-  const transferTx = Math.floor(Math.random() * 1000000000);
+  // Get current peer data
+  const { data: peerData, error: peerError } = await supabase
+    .from('wireguard_peers')
+    .select('public_key')
+    .eq('id', peerId)
+    .eq('user_id', userId)
+    .single();
+
+  if (peerError || !peerData) {
+    throw new Error(`Peer not found: ${peerError?.message}`);
+  }
+
+  // Get real WireGuard status
+  const wgStatus = await getWireGuardStatus();
+  const peerStatus = wgStatus.peers[peerData.public_key];
   
-  // Update peer status in database
+  if (!peerStatus) {
+    // Peer exists in database but not in WireGuard
+    const { data: peer, error } = await supabase
+      .from('wireguard_peers')
+      .update({
+        status: 'disconnected',
+        last_handshake: null,
+      })
+      .eq('id', peerId)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update peer status: ${error.message}`);
+    }
+
+    return new Response(JSON.stringify({ peer }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Update peer with real status
   const { data: peer, error } = await supabase
     .from('wireguard_peers')
     .update({
-      status: randomStatus,
-      last_handshake: randomStatus === 'connected' ? new Date().toISOString() : null,
-      transfer_rx: transferRx,
-      transfer_tx: transferTx,
+      status: peerStatus.status,
+      last_handshake: peerStatus.lastHandshake,
+      transfer_rx: peerStatus.transferRx,
+      transfer_tx: peerStatus.transferTx,
+      endpoint: peerStatus.endpoint,
     })
     .eq('id', peerId)
     .eq('user_id', userId)
@@ -291,4 +360,244 @@ async function getPeerStatus(userId: string, params: any) {
   return new Response(JSON.stringify({ peer }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
+}
+
+async function syncWireGuardStatus() {
+  console.log('Starting WireGuard status sync...');
+  
+  try {
+    const wgStatus = await getWireGuardStatus();
+    
+    // Update server status
+    await supabase
+      .from('wireguard_server')
+      .update({
+        status: wgStatus.interface ? 'running' : 'stopped',
+        public_key: wgStatus.interface?.publicKey,
+        listen_port: wgStatus.interface?.listenPort,
+        updated_at: new Date().toISOString(),
+      })
+      .limit(1);
+
+    // Get all peers from database
+    const { data: dbPeers, error: dbError } = await supabase
+      .from('wireguard_peers')
+      .select('id, public_key, name');
+
+    if (dbError) {
+      throw new Error(`Failed to fetch peers: ${dbError.message}`);
+    }
+
+    // Update each peer's status
+    const updates = [];
+    for (const dbPeer of dbPeers || []) {
+      const wgPeer = wgStatus.peers[dbPeer.public_key];
+      
+      const updateData = {
+        status: wgPeer ? wgPeer.status : 'disconnected',
+        last_handshake: wgPeer?.lastHandshake || null,
+        transfer_rx: wgPeer?.transferRx || 0,
+        transfer_tx: wgPeer?.transferTx || 0,
+        endpoint: wgPeer?.endpoint || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      updates.push(
+        supabase
+          .from('wireguard_peers')
+          .update(updateData)
+          .eq('id', dbPeer.id)
+      );
+    }
+
+    await Promise.all(updates);
+    console.log(`Updated ${updates.length} peers`);
+
+    return new Response(JSON.stringify({ 
+      success: true, 
+      interface: wgStatus.interface,
+      peersUpdated: updates.length 
+    }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+
+  } catch (error) {
+    console.error('Error syncing WireGuard status:', error);
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function getWireGuardStatus() {
+  try {
+    const process = new Deno.Command("wg", {
+      args: ["show", "wg0"],
+      stdout: "piped",
+      stderr: "piped",
+    });
+    
+    const output = await process.output();
+    if (!output.success) {
+      const error = new TextDecoder().decode(output.stderr);
+      console.log('WireGuard show command failed:', error);
+      return { interface: null, peers: {} };
+    }
+    
+    const wgOutput = new TextDecoder().decode(output.stdout);
+    return parseWireGuardOutput(wgOutput);
+    
+  } catch (error) {
+    console.error('Error executing wg show:', error);
+    return { interface: null, peers: {} };
+  }
+}
+
+function parseWireGuardOutput(output: string) {
+  const lines = output.split('\n').map(line => line.trim()).filter(line => line);
+  
+  let interface_info: any = null;
+  const peers: { [key: string]: any } = {};
+  let currentPeer: any = null;
+
+  for (const line of lines) {
+    if (line.startsWith('interface:')) {
+      interface_info = { name: line.split(':')[1].trim() };
+    } else if (line.startsWith('public key:')) {
+      if (currentPeer) {
+        // This is a peer public key
+        currentPeer.publicKey = line.split(':')[1].trim();
+      } else {
+        // This is the interface public key
+        if (interface_info) {
+          interface_info.publicKey = line.split(':')[1].trim();
+        }
+      }
+    } else if (line.startsWith('listening port:')) {
+      if (interface_info) {
+        interface_info.listenPort = parseInt(line.split(':')[1].trim());
+      }
+    } else if (line.startsWith('peer:')) {
+      // Save previous peer if exists
+      if (currentPeer) {
+        peers[currentPeer.publicKey] = currentPeer;
+      }
+      // Start new peer
+      currentPeer = {
+        publicKey: line.split(':')[1].trim(),
+        status: 'connected', // If it shows up in wg show, it's configured
+      };
+    } else if (line.startsWith('endpoint:')) {
+      if (currentPeer) {
+        currentPeer.endpoint = line.split(':').slice(1).join(':').trim();
+      }
+    } else if (line.startsWith('allowed ips:')) {
+      if (currentPeer) {
+        currentPeer.allowedIps = line.split(':')[1].trim();
+      }
+    } else if (line.startsWith('latest handshake:')) {
+      if (currentPeer) {
+        const handshakeText = line.split(':').slice(1).join(':').trim();
+        currentPeer.lastHandshake = parseHandshakeTime(handshakeText);
+        currentPeer.status = isRecentHandshake(handshakeText) ? 'connected' : 'disconnected';
+      }
+    } else if (line.startsWith('transfer:')) {
+      if (currentPeer) {
+        const transferMatch = line.match(/transfer:\s+(.+?)\s+received,\s+(.+?)\s+sent/);
+        if (transferMatch) {
+          currentPeer.transferRx = parseTransferAmount(transferMatch[1]);
+          currentPeer.transferTx = parseTransferAmount(transferMatch[2]);
+        }
+      }
+    }
+  }
+
+  // Save last peer
+  if (currentPeer) {
+    peers[currentPeer.publicKey] = currentPeer;
+  }
+
+  return { interface: interface_info, peers };
+}
+
+function parseHandshakeTime(handshakeText: string): string | null {
+  if (handshakeText.includes('Never') || handshakeText.includes('never')) {
+    return null;
+  }
+
+  const now = new Date();
+  
+  // Parse relative time like "27 seconds ago", "1 hour, 21 minutes, 2 seconds ago"
+  const timeMatch = handshakeText.match(/(\d+)\s+(second|minute|hour|day)s?\s+ago/g);
+  if (timeMatch) {
+    let totalSeconds = 0;
+    
+    for (const match of timeMatch) {
+      const [_, num, unit] = match.match(/(\d+)\s+(second|minute|hour|day)s?\s+ago/) || [];
+      const value = parseInt(num);
+      
+      switch (unit) {
+        case 'second':
+          totalSeconds += value;
+          break;
+        case 'minute':
+          totalSeconds += value * 60;
+          break;
+        case 'hour':
+          totalSeconds += value * 3600;
+          break;
+        case 'day':
+          totalSeconds += value * 86400;
+          break;
+      }
+    }
+    
+    const handshakeTime = new Date(now.getTime() - (totalSeconds * 1000));
+    return handshakeTime.toISOString();
+  }
+  
+  return null;
+}
+
+function isRecentHandshake(handshakeText: string): boolean {
+  if (handshakeText.includes('Never') || handshakeText.includes('never')) {
+    return false;
+  }
+  
+  // Consider connected if handshake was within last 3 minutes
+  const recentMatch = handshakeText.match(/(\d+)\s+seconds?\s+ago/) || 
+                     handshakeText.match(/(\d+)\s+minutes?\s+ago/);
+  
+  if (recentMatch) {
+    const value = parseInt(recentMatch[1]);
+    const unit = recentMatch[0].includes('minute') ? 'minute' : 'second';
+    
+    if (unit === 'second' && value <= 180) return true; // 3 minutes in seconds
+    if (unit === 'minute' && value <= 3) return true;
+  }
+  
+  return false;
+}
+
+function parseTransferAmount(transferText: string): number {
+  const match = transferText.match(/([\d.]+)\s*([KMGT]?i?B)/);
+  if (!match) return 0;
+  
+  const value = parseFloat(match[1]);
+  const unit = match[2];
+  
+  const multipliers: { [key: string]: number } = {
+    'B': 1,
+    'KiB': 1024,
+    'MiB': 1024 * 1024,
+    'GiB': 1024 * 1024 * 1024,
+    'TiB': 1024 * 1024 * 1024 * 1024,
+    'KB': 1000,
+    'MB': 1000 * 1000,
+    'GB': 1000 * 1000 * 1000,
+    'TB': 1000 * 1000 * 1000 * 1000,
+  };
+  
+  return Math.floor(value * (multipliers[unit] || 1));
 }

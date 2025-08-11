@@ -23,6 +23,7 @@ export default function WireGuardDashboard() {
     deletePeer,
     downloadConfig,
     refreshPeerStatus,
+    syncWireGuardStatus,
     formatTransfer
   } = useWireGuard();
 
@@ -96,6 +97,15 @@ PersistentKeepalive = ${peer.persistent_keepalive}`;
             </p>
           </div>
           <div className="flex items-center space-x-2">
+            <Button
+              variant="outline"
+              onClick={syncWireGuardStatus}
+              disabled={loading}
+              className="mr-2"
+            >
+              <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+              Sync Status
+            </Button>
             <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
               <DialogTrigger asChild>
                 <Button className="bg-primary hover:bg-primary/90">

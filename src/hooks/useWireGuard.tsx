@@ -220,6 +220,31 @@ export function useWireGuard() {
     }
   };
 
+  // Sync WireGuard status from actual server
+  const syncWireGuardStatus = async () => {
+    try {
+      const result = await callEdgeFunction('sync_wireguard_status', {});
+      console.log('WireGuard sync result:', result);
+      await loadPeers(); // Reload all peers to get updated status
+      await loadServerConfig(); // Reload server config
+      
+      toast({
+        title: "Success",
+        description: `Synced status for ${result.peersUpdated || 0} peers`
+      });
+      
+      return result;
+    } catch (error: any) {
+      console.error('Error syncing WireGuard status:', error);
+      toast({
+        title: "Error",
+        description: "Failed to sync WireGuard status",
+        variant: "destructive"
+      });
+      throw error;
+    }
+  };
+
   // Format transfer data
   const formatTransfer = (bytes: number) => {
     if (bytes === 0) return '0 B';
@@ -234,6 +259,13 @@ export function useWireGuard() {
     if (session?.user) {
       loadPeers();
       loadServerConfig();
+      
+      // Auto-sync every 30 seconds
+      const interval = setInterval(() => {
+        syncWireGuardStatus().catch(console.error);
+      }, 30000);
+      
+      return () => clearInterval(interval);
     } else {
       setPeers([]);
       setServerConfig(null);
@@ -250,6 +282,7 @@ export function useWireGuard() {
     deletePeer,
     downloadConfig,
     refreshPeerStatus,
+    syncWireGuardStatus,
     formatTransfer,
     loadPeers,
     loadServerConfig,
