@@ -65,8 +65,15 @@ supabase login
 ```
 
 3. Link your local project to your Supabase project:
+
+**For Supabase Cloud (this project):**
 ```bash
-supabase link --project-ref YOUR_PROJECT_ID
+supabase link --project-ref nqvhbsepjlinqyqaxgsi
+```
+
+**For Self-hosted Supabase:**
+```bash
+supabase link --project-ref YOUR_PROJECT_ID --db-url "postgresql://postgres:[password]@[host]:[port]/postgres"
 ```
 
 4. Push the database migrations:
