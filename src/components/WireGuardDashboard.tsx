@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -70,13 +70,49 @@ Endpoint = your-server.example.com:51820
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25`;
 
+// LocalStorage utility functions
+const STORAGE_KEY = "wireguard-peers";
+
+const loadPeersFromStorage = (): WireGuardPeer[] => {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+  } catch (error) {
+    console.error("Error loading peers from localStorage:", error);
+  }
+  return mockPeers; // Fallback to mock data
+};
+
+const savePeersToStorage = (peers: WireGuardPeer[]) => {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(peers));
+  } catch (error) {
+    console.error("Error saving peers to localStorage:", error);
+  }
+};
+
 export default function WireGuardDashboard() {
-  const [peers, setPeers] = useState<WireGuardPeer[]>(mockPeers);
+  const [peers, setPeers] = useState<WireGuardPeer[]>([]);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [selectedPeer, setSelectedPeer] = useState<WireGuardPeer | null>(null);
   const [newPeerName, setNewPeerName] = useState("");
   const [newPeerIP, setNewPeerIP] = useState("");
   const { toast } = useToast();
+
+  // Load peers from localStorage on component mount
+  useEffect(() => {
+    const storedPeers = loadPeersFromStorage();
+    setPeers(storedPeers);
+  }, []);
+
+  // Save peers to localStorage whenever peers state changes
+  useEffect(() => {
+    if (peers.length > 0) {
+      savePeersToStorage(peers);
+    }
+  }, [peers]);
 
   const getStatusBadge = (status: WireGuardPeer["status"]) => {
     switch (status) {
