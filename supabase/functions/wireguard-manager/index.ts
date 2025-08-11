@@ -161,23 +161,34 @@ async function createPeer(userId: string, params: any) {
     throw new Error(`Failed to create peer: ${error.message}`);
   }
 
-  // Generate and store configuration file
+  // Generate configuration content
   const configContent = await generatePeerConfig(peer);
-  const fileName = `${userId}/${peer.id}/peer.conf`;
+  const configPath = `/root/${name}.conf`;
   
-  const { error: uploadError } = await supabase.storage
-    .from('wireguard-configs')
-    .upload(fileName, new Blob([configContent], { type: 'text/plain' }));
+  // Write config file to server filesystem
+  try {
+    await Deno.writeTextFile(configPath, configContent);
+    console.log(`Config file written to ${configPath}`);
+  } catch (fileError) {
+    console.error(`Failed to write config file: ${fileError}`);
+  }
 
-  if (uploadError) {
-    console.error('Failed to upload config:', uploadError);
+  // Add peer to WireGuard interface
+  try {
+    await addPeerToInterface(peer);
+  } catch (wgError) {
+    console.error(`Failed to add peer to WireGuard: ${wgError}`);
   }
 
   // Update peer with config file path
-  await supabase
+  const { error: updateError } = await supabase
     .from('wireguard_peers')
-    .update({ config_file_path: fileName })
+    .update({ config_file_path: configPath })
     .eq('id', peer.id);
+
+  if (updateError) {
+    console.error('Failed to update peer config path:', updateError);
+  }
 
   return new Response(JSON.stringify({ peer, configContent }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -234,27 +245,39 @@ async function deletePeer(userId: string, params: any) {
   // Get peer info for cleanup
   const { data: peer } = await supabase
     .from('wireguard_peers')
-    .select('config_file_path')
+    .select('config_file_path, public_key, name')
     .eq('id', id)
-    .eq('user_id', userId)
     .single();
+
+  if (!peer) {
+    throw new Error('Peer not found');
+  }
+
+  // Remove peer from WireGuard interface
+  try {
+    await removePeerFromInterface(peer.public_key);
+  } catch (wgError) {
+    console.error(`Failed to remove peer from WireGuard: ${wgError}`);
+  }
+
+  // Delete config file from filesystem
+  if (peer.config_file_path) {
+    try {
+      await Deno.remove(peer.config_file_path);
+      console.log(`Deleted config file: ${peer.config_file_path}`);
+    } catch (fileError) {
+      console.error(`Failed to delete config file: ${fileError}`);
+    }
+  }
 
   // Delete from database
   const { error } = await supabase
     .from('wireguard_peers')
     .delete()
-    .eq('id', id)
-    .eq('user_id', userId);
+    .eq('id', id);
 
   if (error) {
     throw new Error(`Failed to delete peer: ${error.message}`);
-  }
-
-  // Clean up config file
-  if (peer?.config_file_path) {
-    await supabase.storage
-      .from('wireguard-configs')
-      .remove([peer.config_file_path]);
   }
 
   return new Response(JSON.stringify({ success: true }), {
@@ -368,16 +391,24 @@ async function syncWireGuardStatus() {
   try {
     const wgStatus = await getWireGuardStatus();
     
-    // Update server status
-    await supabase
+    // Update server status (use upsert to handle empty table)
+    const { data: existingServer } = await supabase
       .from('wireguard_server')
-      .update({
-        status: wgStatus.interface ? 'running' : 'stopped',
-        public_key: wgStatus.interface?.publicKey,
-        listen_port: wgStatus.interface?.listenPort,
-        updated_at: new Date().toISOString(),
-      })
-      .limit(1);
+      .select('id')
+      .limit(1)
+      .single();
+
+    if (existingServer) {
+      await supabase
+        .from('wireguard_server')
+        .update({
+          status: wgStatus.interface ? 'running' : 'stopped',
+          public_key: wgStatus.interface?.publicKey,
+          listen_port: wgStatus.interface?.listenPort,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existingServer.id);
+    }
 
     // Get all peers from database
     const { data: dbPeers, error: dbError } = await supabase
@@ -388,8 +419,8 @@ async function syncWireGuardStatus() {
       throw new Error(`Failed to fetch peers: ${dbError.message}`);
     }
 
-    // Update each peer's status
-    const updates = [];
+    // Update each peer's status individually
+    let updatedCount = 0;
     for (const dbPeer of dbPeers || []) {
       const wgPeer = wgStatus.peers[dbPeer.public_key];
       
@@ -402,21 +433,23 @@ async function syncWireGuardStatus() {
         updated_at: new Date().toISOString(),
       };
 
-      updates.push(
-        supabase
+      try {
+        await supabase
           .from('wireguard_peers')
           .update(updateData)
-          .eq('id', dbPeer.id)
-      );
+          .eq('id', dbPeer.id);
+        updatedCount++;
+      } catch (updateError) {
+        console.error(`Failed to update peer ${dbPeer.name}:`, updateError);
+      }
     }
 
-    await Promise.all(updates);
-    console.log(`Updated ${updates.length} peers`);
+    console.log(`Updated ${updatedCount} peers`);
 
     return new Response(JSON.stringify({ 
       success: true, 
       interface: wgStatus.interface,
-      peersUpdated: updates.length 
+      peersUpdated: updatedCount 
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
@@ -600,4 +633,53 @@ function parseTransferAmount(transferText: string): number {
   };
   
   return Math.floor(value * (multipliers[unit] || 1));
+}
+
+// Add peer to WireGuard interface
+async function addPeerToInterface(peer: any) {
+  try {
+    const process = new Deno.Command("sudo", {
+      args: [
+        "wg", "set", "wg0",
+        "peer", peer.public_key,
+        "allowed-ips", peer.allowed_ips,
+        "persistent-keepalive", (peer.persistent_keepalive || 25).toString()
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    });
+    
+    const output = await process.output();
+    if (!output.success) {
+      const error = new TextDecoder().decode(output.stderr);
+      throw new Error(`Failed to add peer to interface: ${error}`);
+    }
+    
+    console.log(`Added peer ${peer.name} to WireGuard interface`);
+  } catch (error) {
+    console.error('Error adding peer to interface:', error);
+    throw error;
+  }
+}
+
+// Remove peer from WireGuard interface
+async function removePeerFromInterface(publicKey: string) {
+  try {
+    const process = new Deno.Command("sudo", {
+      args: ["wg", "set", "wg0", "peer", publicKey, "remove"],
+      stdout: "piped",
+      stderr: "piped",
+    });
+    
+    const output = await process.output();
+    if (!output.success) {
+      const error = new TextDecoder().decode(output.stderr);
+      throw new Error(`Failed to remove peer from interface: ${error}`);
+    }
+    
+    console.log(`Removed peer ${publicKey} from WireGuard interface`);
+  } catch (error) {
+    console.error('Error removing peer from interface:', error);
+    throw error;
+  }
 }

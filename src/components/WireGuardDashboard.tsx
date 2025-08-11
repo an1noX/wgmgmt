@@ -24,7 +24,8 @@ export default function WireGuardDashboard() {
     downloadConfig,
     refreshPeerStatus,
     syncWireGuardStatus,
-    formatTransfer
+    formatTransfer,
+    generatePeerConfigContent
   } = useWireGuard();
 
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -71,16 +72,6 @@ export default function WireGuardDashboard() {
     }
   };
 
-  const generatePeerConfig = (peer: WireGuardPeer) => `[Interface]
-PrivateKey = ${peer.private_key}
-Address = ${peer.allowed_ips}
-DNS = ${serverConfig?.dns_servers?.join(', ') || '1.1.1.1, 8.8.8.8'}
-
-[Peer]
-PublicKey = ${serverConfig?.public_key || 'SERVER_PUBLIC_KEY_HERE'}
-Endpoint = ${serverConfig?.endpoint || 'your-server.example.com:51820'}
-AllowedIPs = 0.0.0.0/0
-PersistentKeepalive = ${peer.persistent_keepalive}`;
 
   const connectedCount = peers.filter(p => p.status === "connected").length;
   const totalCount = peers.length;
@@ -283,7 +274,7 @@ PersistentKeepalive = ${peer.persistent_keepalive}`;
                                     className="mt-2 font-mono text-sm"
                                     rows={12}
                                     readOnly
-                                    value={generatePeerConfig(peer)}
+                                    value={generatePeerConfigContent(peer)}
                                   />
                                   <Button 
                                     className="mt-2 w-full" 
@@ -298,7 +289,7 @@ PersistentKeepalive = ${peer.persistent_keepalive}`;
                                   <Label>QR Code (Mobile)</Label>
                                   <div className="bg-white p-4 rounded-lg">
                                     <QRCodeSVG
-                                      value={generatePeerConfig(peer)}
+                                      value={generatePeerConfigContent(peer)}
                                       size={200}
                                       level="M"
                                       includeMargin

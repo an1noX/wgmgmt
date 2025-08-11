@@ -171,21 +171,13 @@ export function useWireGuard() {
     }
   };
 
-  // Download config file
+  // Download config file  
   const downloadConfig = async (peer: WireGuardPeer) => {
     try {
-      if (!peer.config_file_path) {
-        throw new Error('Config file not found');
-      }
-
-      const { data, error } = await supabase.storage
-        .from('wireguard-configs')
-        .download(peer.config_file_path);
-
-      if (error) throw error;
-
-      const text = await data.text();
-      const blob = new Blob([text], { type: 'text/plain' });
+      // Generate config content locally since files are on server filesystem
+      const configContent = generatePeerConfigContent(peer);
+      
+      const blob = new Blob([configContent], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       
       const a = document.createElement('a');
@@ -208,6 +200,20 @@ export function useWireGuard() {
         variant: "destructive"
       });
     }
+  };
+
+  // Generate peer config content
+  const generatePeerConfigContent = (peer: WireGuardPeer) => {
+    return `[Interface]
+PrivateKey = ${peer.private_key}
+Address = ${peer.allowed_ips}
+DNS = ${serverConfig?.dns_servers?.join(', ') || '1.1.1.1, 8.8.8.8'}
+
+[Peer]
+PublicKey = ${serverConfig?.public_key || 'SERVER_PUBLIC_KEY_HERE'}
+Endpoint = ${serverConfig?.endpoint || 'your-server.example.com:51820'}
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = ${peer.persistent_keepalive}`;
   };
 
   // Refresh peer status
@@ -286,5 +292,6 @@ export function useWireGuard() {
     formatTransfer,
     loadPeers,
     loadServerConfig,
+    generatePeerConfigContent,
   };
 }
