@@ -35,8 +35,8 @@ Before you begin, ensure you have the following installed:
 ### 1. Clone the Repository
 
 ```bash
-git clone <YOUR_REPOSITORY_URL>
-cd wireguard-management-dashboard
+git clone https://github.com/an1noX/wgmgmt.git
+cd wgmgmt
 ```
 
 ### 2. Install Dependencies
