@@ -266,10 +266,12 @@ PersistentKeepalive = ${peer.persistent_keepalive}`;
       loadPeers();
       loadServerConfig();
       
-      // Auto-sync every 30 seconds
+      // Initial sync and then every 15 seconds for real-time monitoring  
+      syncWireGuardStatus().catch(console.error);
+      
       const interval = setInterval(() => {
         syncWireGuardStatus().catch(console.error);
-      }, 30000);
+      }, 15000);
       
       return () => clearInterval(interval);
     } else {
