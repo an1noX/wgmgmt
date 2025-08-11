@@ -1,7 +1,7 @@
 
-# WireGuard Management Dashboard
+# WireGuard Management Platform
 
-A comprehensive web-based WireGuard VPN management system built with React, TypeScript, and Supabase. This application provides a user-friendly interface for managing WireGuard peers, configurations, and server status.
+A comprehensive web-based WireGuard VPN management system built with React, TypeScript, and Supabase. This platform provides a user-friendly interface for managing WireGuard peers, configurations, and monitoring an existing WireGuard server.
 
 ## Features
 
@@ -12,6 +12,7 @@ A comprehensive web-based WireGuard VPN management system built with React, Type
 - 📁 **Configuration Files** - Download .conf files for WireGuard clients
 - 🛡️ **Security** - Row Level Security (RLS) policies for data protection
 - 📱 **Responsive Design** - Works on desktop and mobile devices
+- 🖥️ **Server Integration** - Connects to existing WireGuard installations
 
 ## Technology Stack
 
@@ -24,11 +25,12 @@ A comprehensive web-based WireGuard VPN management system built with React, Type
 
 ## Prerequisites
 
-Before you begin, ensure you have the following installed:
+Before you begin, ensure you have:
 
 - [Node.js](https://nodejs.org/) (version 18 or higher)
 - [npm](https://www.npmjs.com/) (comes with Node.js)
 - A [Supabase](https://supabase.com/) account
+- **WireGuard server already installed and configured**
 
 ## Installation
 
@@ -122,31 +124,30 @@ npm run dev
 
 The application will be available at `http://localhost:8080`
 
-## WireGuard Server Setup
+## Connecting to Your WireGuard Server
 
-This application manages WireGuard configurations but requires a separate WireGuard server. Here's how to set up the server:
+This platform manages an existing WireGuard server installation. After setting up the application, you need to configure it to connect to your WireGuard server.
 
-### Server Installation
+### Server Configuration in the Platform
 
-On your VPN server (Ubuntu/Debian):
+1. Log into your application
+2. Navigate to the server configuration section
+3. Enter your WireGuard server details:
+   - **Public Key**: Your server's public key (from `/etc/wireguard/public.key`)
+   - **Endpoint**: Your server's public IP and port (e.g., `your-server.example.com:51820`)
+   - **Network Subnet**: Your server's network (e.g., `10.0.0.0/24`)
+   - **DNS Servers**: Preferred DNS servers (e.g., `1.1.1.1, 8.8.8.8`)
 
+### Finding Your Server's Public Key
+
+On your WireGuard server, run:
 ```bash
-# Update package list
-sudo apt update
-
-# Install WireGuard
-sudo apt install wireguard
-
-# Generate server keys
-wg genkey | sudo tee /etc/wireguard/private.key
-sudo chmod go= /etc/wireguard/private.key
-sudo cat /etc/wireguard/private.key | wg pubkey | sudo tee /etc/wireguard/public.key
+sudo cat /etc/wireguard/public.key
 ```
 
-### Server Configuration
+### Example Server Configuration
 
-Create `/etc/wireguard/wg0.conf`:
-
+Your WireGuard server configuration (`/etc/wireguard/wg0.conf`) should look like:
 ```ini
 [Interface]
 PrivateKey = <SERVER_PRIVATE_KEY>
@@ -155,32 +156,8 @@ ListenPort = 51820
 PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
 
-# Peers will be added here automatically by the management system
+# Peers will be managed by this platform
 ```
-
-### Enable IP Forwarding
-
-```bash
-echo 'net.ipv4.ip_forward = 1' | sudo tee -a /etc/sysctl.conf
-sudo sysctl -p
-```
-
-### Start WireGuard Service
-
-```bash
-sudo systemctl enable wg-quick@wg0.service
-sudo systemctl start wg-quick@wg0.service
-```
-
-### Update Server Configuration in Database
-
-1. Log into your application
-2. The system will automatically detect if server configuration is missing
-3. Update the server configuration with:
-   - **Public Key**: Your server's public key
-   - **Endpoint**: Your server's public IP and port (e.g., `your-server.example.com:51820`)
-   - **Network Subnet**: `10.0.0.0/24` (or your chosen subnet)
-   - **DNS Servers**: `1.1.1.1, 8.8.8.8` (or your preferred DNS)
 
 ## Client Configuration
 
