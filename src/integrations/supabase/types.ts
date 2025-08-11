@@ -71,6 +71,102 @@ export type Database = {
         }
         Relationships: []
       }
+      wireguard_peers: {
+        Row: {
+          allowed_ips: string
+          config_file_path: string | null
+          created_at: string
+          endpoint: string | null
+          id: string
+          last_handshake: string | null
+          name: string
+          persistent_keepalive: number | null
+          private_key: string
+          public_key: string
+          status: string
+          transfer_rx: number | null
+          transfer_tx: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          allowed_ips?: string
+          config_file_path?: string | null
+          created_at?: string
+          endpoint?: string | null
+          id?: string
+          last_handshake?: string | null
+          name: string
+          persistent_keepalive?: number | null
+          private_key: string
+          public_key: string
+          status?: string
+          transfer_rx?: number | null
+          transfer_tx?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          allowed_ips?: string
+          config_file_path?: string | null
+          created_at?: string
+          endpoint?: string | null
+          id?: string
+          last_handshake?: string | null
+          name?: string
+          persistent_keepalive?: number | null
+          private_key?: string
+          public_key?: string
+          status?: string
+          transfer_rx?: number | null
+          transfer_tx?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      wireguard_server: {
+        Row: {
+          created_at: string
+          dns_servers: string[] | null
+          endpoint: string | null
+          id: string
+          interface_name: string
+          listen_port: number
+          network_subnet: string
+          private_key: string
+          public_key: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          dns_servers?: string[] | null
+          endpoint?: string | null
+          id?: string
+          interface_name?: string
+          listen_port?: number
+          network_subnet?: string
+          private_key: string
+          public_key: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          dns_servers?: string[] | null
+          endpoint?: string | null
+          id?: string
+          interface_name?: string
+          listen_port?: number
+          network_subnet?: string
+          private_key?: string
+          public_key?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
